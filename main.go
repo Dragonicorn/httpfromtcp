@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 )
@@ -32,7 +33,7 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 				break
 			}
 			if err != nil {
-				fmt.Printf("error reading data from file - %v\n", err)
+				fmt.Printf("error reading data - %v\n", err)
 				close(ch)
 				f.Close()
 				os.Exit(1)
@@ -43,6 +44,7 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 			// fmt.Printf("sending last line '%s' to channel...\n", line)
 			ch <- line
 			close(ch)
+			fmt.Printf("TCP connection closed\n")
 			f.Close()
 		}
 	}()
@@ -50,14 +52,49 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 }
 
 func main() {
-	const fn string = "messages.txt"
+	const (
+		// fn string = "messages.txt"
+		// host string = "127.0.0.1"
+		port int = 42069
+	)
+	// var (
+	// 	err   error
+	// 	line  string
+	// 	tcpC  *net.TCPConn
+	// 	tcpEP *net.TCPAddr
+	// 	tcpL  *net.TCPListener
+	// )
 
-	f, err := os.Open(fn)
+	// f, err := os.Open(fn)
+	// if err != nil {
+	// 	fmt.Printf("error opening file '%s' - %v\n", f.Name(), err)
+	// 	os.Exit(1)
+	// }
+
+	// tcpEP, err = net.ResolveTCPAddr("tcp", net.JoinHostPort(host, fmt.Sprintf("%d", port)))
+	// if err != nil {
+	// 	fmt.Printf("error resolving TCP endpoint - %v\n", err)
+	// 	os.Exit(1)
+	// }
+
+	// tcpL, err = net.ListenTCP("tcp", tcpEP)
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
-		fmt.Printf("error opening file '%s' - %v\n", f.Name(), err)
+		fmt.Printf("error opening port %d - %v\n", port, err)
 		os.Exit(1)
 	}
-	for line := range getLinesChannel(f) {
-		fmt.Printf("read: %s\n", line)
+	// defer tcpL.Close()
+	defer l.Close()
+
+	// tcpC, err = tcpL.AcceptTCP()
+	c, err := l.Accept()
+	if err != nil {
+		fmt.Printf("error accepting connection on port %d - %v\n", port, err)
+		os.Exit(1)
+	}
+	fmt.Printf("TCP connection accepted on port %d\n", port)
+	for line := range getLinesChannel(c) {
+		// fmt.Printf("read: %s\n", line)
+		fmt.Println(line)
 	}
 }
