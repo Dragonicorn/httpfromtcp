@@ -1,6 +1,7 @@
 package request
 
 import (
+	"fmt"
 	"io"
 	"testing"
 
@@ -34,6 +35,9 @@ func (cr *chunkReader) Read(p []byte) (n int, err error) {
 }
 
 func TestRequestLineParse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping TestRequestLineParse testing...")
+	}
 	var (
 		reader *chunkReader
 		r      *Request
@@ -98,4 +102,151 @@ func TestRequestLineParse(t *testing.T) {
 	}
 	_, err = RequestFromReader(reader)
 	require.Error(t, err)
+}
+
+func TestRequestAndHeadersParse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping TestRequestAndHeadersParse testing...")
+	}
+	var (
+		reader *chunkReader
+		r      *Request
+		err    error
+	)
+	fmt.Printf("\n\nTest: Standard Headers\n\n")
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "localhost:42069", r.Headers["host"])
+	assert.Equal(t, "curl/7.81.0", r.Headers["user-agent"])
+	assert.Equal(t, "*/*", r.Headers["accept"])
+
+	fmt.Printf("\n\nTest: Case Insensitive Headers\n\n")
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHoSt: localhost:42069\r\nuser-AGENT: curl/7.81.0\r\nAcCePt: */*\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "localhost:42069", r.Headers["host"])
+	assert.Equal(t, "curl/7.81.0", r.Headers["user-agent"])
+	assert.Equal(t, "*/*", r.Headers["accept"])
+
+	fmt.Printf("\n\nTest: Illegal header case\n\n")
+	reader = &chunkReader{
+		data:            "get / HTTP/1.1\r\nHOST: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.Error(t, err)
+
+	fmt.Printf("\n\nTest: Empty Headers\n\n")
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.Error(t, err)
+
+	fmt.Printf("\n\nTest: Duplicate Headers\n\n")
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\nUser-Agent: curl/7.81.0\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "localhost:42069", r.Headers["host"])
+	assert.Equal(t, "curl/7.81.0, curl/7.81.0", r.Headers["user-agent"])
+	assert.Equal(t, "*/*", r.Headers["accept"])
+
+	fmt.Printf("\n\nTest: Malformed Header\n\n")
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost localhost:42069\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.Error(t, err)
+}
+
+func TestBodyParse(t *testing.T) {
+	var (
+		reader *chunkReader
+		r      *Request
+		err    error
+	)
+	fmt.Printf("\n\nTest: Standard Body\n\n")
+	reader = &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 13\r\n" +
+			"\r\n" +
+			"hello world!\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "hello world!\n", string(r.Body))
+
+	fmt.Printf("\n\nTest: No Content-Length Header\n\n")
+	reader = &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"\r\n" +
+			"hello world!\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "", string(r.Body))
+
+	fmt.Printf("\n\nTest: Body shorter than reported content length\n\n")
+	reader = &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 20\r\n" +
+			"\r\n" +
+			"partial content",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.Error(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "partial content", string(r.Body))
+
+	fmt.Printf("\n\nTest: Body larger than reported content length\n\n")
+	reader = &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 10\r\n" +
+			"\r\n" +
+			"partial content",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.Error(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "partial co", string(r.Body))
+
+	fmt.Printf("\n\nTest: Large Body\n\n")
+	reader = &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 127\r\n" +
+			"\r\n" +
+			"What a wormderful morning it is to be a crow - with the sun shining and the rain falling, beautiful rainbow, and worms galore!\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "What a wormderful morning it is to be a crow - with the sun shining and the rain falling, beautiful rainbow, and worms galore!\n", string(r.Body))
+
 }

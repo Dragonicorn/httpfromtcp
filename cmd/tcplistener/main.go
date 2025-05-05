@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"os"
-	"strings"
+
+	"github.com/dragonicorn/httpfromtcp/internal/request"
 )
 
 func buildLine(ch chan string, line string, lines []string) string {
@@ -18,40 +18,41 @@ func buildLine(ch chan string, line string, lines []string) string {
 	return line
 }
 
-func getLinesChannel(f io.ReadCloser) <-chan string {
-	ch := make(chan string)
-	go func() {
-		var (
-			err  error
-			line string
-			n    int
-		)
-		b := make([]byte, 8)
-		for {
-			n, err = f.Read(b)
-			if n == 0 && err == io.EOF {
-				break
-			}
-			if err != nil {
-				fmt.Printf("error reading data - %v\n", err)
-				close(ch)
-				f.Close()
-				os.Exit(1)
-			}
-			line = buildLine(ch, line, strings.Split(string(b[:n]), "\n"))
-		}
-		if len(line) > 0 {
-			// fmt.Printf("sending last line '%s' to channel...\n", line)
-			ch <- line
-			close(ch)
-			fmt.Printf("TCP connection closed\n")
-			f.Close()
-		}
-	}()
-	return ch
-}
+// func getLinesChannel(f io.ReadCloser) <-chan string {
+// 	ch := make(chan string)
+// 	go func() {
+// 		var (
+// 			err  error
+// 			line string
+// 			n    int
+// 		)
+// 		b := make([]byte, 8)
+// 		for {
+// 			n, err = f.Read(b)
+// 			if n == 0 && err == io.EOF {
+// 				break
+// 			}
+// 			if err != nil {
+// 				fmt.Printf("error reading data - %v\n", err)
+// 				close(ch)
+// 				f.Close()
+// 				os.Exit(1)
+// 			}
+// 			line = buildLine(ch, line, strings.Split(string(b[:n]), "\n"))
+// 		}
+// 		if len(line) > 0 {
+// 			// fmt.Printf("sending last line '%s' to channel...\n", line)
+// 			ch <- line
+// 			close(ch)
+// 			fmt.Printf("TCP connection closed\n")
+// 			f.Close()
+// 		}
+// 	}()
+// 	return ch
+// }
 
 func main() {
+
 	const (
 		// fn string = "messages.txt"
 		// host string = "127.0.0.1"
@@ -93,8 +94,19 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("TCP connection accepted on port %d\n", port)
-	for line := range getLinesChannel(c) {
-		// fmt.Printf("read: %s\n", line)
-		fmt.Println(line)
+	r, err := request.RequestFromReader(c)
+	if err != nil {
+		fmt.Printf("error reading request - %v\n", err)
+		os.Exit(1)
 	}
+	fmt.Printf("Request line:\n- Method: %s\n- Target: %s\n- Version: %s\nHeaders:\n", r.RequestLine.Method, r.RequestLine.RequestTarget, r.RequestLine.HttpVersion)
+	for k, v := range r.Headers {
+		fmt.Printf("- %s: %s\n", k, v)
+	}
+	fmt.Printf("Body:\n%s\n", string(r.Body))
+	// for line := range getLinesChannel(c) {
+	// 	// fmt.Printf("read: %s\n", line)
+	// 	fmt.Println(line)
+	// }
+
 }
