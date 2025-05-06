@@ -80,7 +80,7 @@ func (req *Request) parse(data []byte) (int, error) {
 		n    int
 		err  error
 	)
-	fmt.Printf("Data to parse: \"%s\" (%d bytes)\n", fixCRLF(string(data)), len(data))
+	fmt.Printf("\tData to parse: \"%s\" (%d bytes)\n", fixCRLF(string(data)), len(data))
 	if req.ParserState == requestStateInitialized {
 		n, err = req.parseRequestLine(string(data))
 		if n == 0 {
@@ -91,7 +91,7 @@ func (req *Request) parse(data []byte) (int, error) {
 		}
 		req.ParserState = requestStateParsingHeaders
 		req.Headers = make(headers.Headers)
-		fmt.Printf("\trequest parse done - returning n: %d\n", n)
+		fmt.Printf("\t    request parse done - returning n: %d\n", n)
 		return n, nil
 	}
 	if req.ParserState == requestStateParsingHeaders {
@@ -104,10 +104,10 @@ func (req *Request) parse(data []byte) (int, error) {
 		}
 		if done {
 			req.ParserState = requestStateParsingBody
-			fmt.Printf("\theaders parse done - returning n: %d\n", n)
+			fmt.Printf("\t    headers parse done - returning n: %d\n", n)
 		} else {
 			req.ParserState = requestStateParsedHeader
-			fmt.Printf("\theader parsed - returning n: %d\n", n)
+			fmt.Printf("\t    header parsed - returning n: %d\n", n)
 		}
 		return n, nil
 	}
@@ -129,75 +129,105 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	req.ParserState = requestStateInitialized
 	state = req.ParserState
 	for req.ParserState != requestStateDone {
-		n, err = io.ReadFull(reader, buf[read:])
-		// fmt.Printf("Previous Buffer Data:    \"%s\" (Read: %d bytes)\n", string(buf[:read]), read)
-		// fmt.Printf("Newly Added Buffer Data: \"%s\" (Read: %d bytes)\n", string(buf[read:]), n)
-		// fmt.Printf("Entire Buffer Contents:  \"%s\" (Read: %d bytes)\n", string(buf), read+n)
-		// update number of bytes read from the reader
-		// fmt.Printf("%d bytes read from reader...\n", n)
-		read += n
-		fmt.Printf("\t%d total bytes read...\n", read)
-		// if err != nil {
-		if ((err == io.EOF) && (n == 0)) || (err == io.ErrUnexpectedEOF) {
-			// io.EOF error will be returned if no more data is available and NO data was read into buffer
-			// if err == io.EOF {
-			// 	if n == 0 {
-			//fmt.Printf("\tnumber of bytes read n=%d, bytes in buffer read=%d\n", n, read)
-			if req.ParserState == requestStateParsingBody {
-				fmt.Printf("\tBody Length: %d / Content-Length: %d\n", read, cl)
-				n = read
-				err = nil
-				if read > cl {
-					n = cl
-					err = fmt.Errorf("error - body length is greater than Content-Length indicated in header")
-					fmt.Printf("%v\n", err)
-				}
-				if read < cl {
-					err = fmt.Errorf("error - body length is less than Content-Length indicated in header")
-					fmt.Printf("%v\n", err)
-				}
-				// copy body content from buffer to request body
-				req.Body = make([]byte, n)
-				copy(req.Body, buf[0:n])
-				fmt.Printf("Data consumed: (%d bytes)\n", n)
-				req.ParserState = requestStateDone
-				break
-			} else if read == 0 {
-				err = nil
-				req.ParserState = requestStateDone
-				break
+		fmt.Printf("\nNew iteration...\n")
+
+		// parsing must occur before demanding more data or read will hang on open connections
+		if req.ParserState != requestStateParsingBody {
+			n, err = req.parse(buf[:read])
+			if err != nil {
+				fmt.Errorf("Error parsing request: %v", err)
+				return nil, err
 			}
-			// }
-			// io.ErrUnexpectedEOF error will be returned if no more data is available but SOME data was read into buffer
-			// } else if err != io.ErrUnexpectedEOF {
-		} else if err != nil {
-			fmt.Errorf("error reading request - %v", err)
-			return nil, err
+			// update number of bytes parsed from the buffer
+			parsed += n
+		}
+		// fmt.Printf("\tContents of buffer: \"%s\" (%d bytes)\n", fixCRLF(string(buf[:read])), read)
+		fmt.Printf("\t%d unparsed bytes in buffer...\n", read-parsed)
+		fmt.Printf("\tContents of buffer parsed so far: \"%s\" (%d bytes)\n", fixCRLF(string(buf[:parsed])), parsed)
+
+		if parsed == 0 && read == len(buf) {
+			fmt.Printf("\tIncreasing buffer size to ")
+			add = make([]byte, len(buf)*2)
+			copy(add, buf)
+			buf = add
+			fmt.Printf("%d/%d bytes\n", len(buf), cap(buf))
+			// } else {
+			// 	fmt.Printf("Contents of buffer parsed so far: \"%s\" (%d bytes)\n", fixCRLF(string(buf[:parsed])), parsed)
+		}
+
+		if parsed == 0 {
+			// fmt.Printf("Buffer contents before io.Read: %s (read = %d)\n\n", fixCRLF(string(buf[read:])), read)
+			// n, err = io.ReadFull(reader, buf[read:])
+			n, err = reader.Read(buf[read:])
+			fmt.Printf("\t    %d bytes appended to buffer\n", n)
+			fmt.Printf("\t    Previous Buffer Data:    \"%s\" (Read: %d bytes)\n", fixCRLF(string(buf[:read])), read)
+			fmt.Printf("\t    Newly Added Buffer Data: \"%s\" (n: %d bytes)\n", fixCRLF(string(buf[read:read+n])), n)
+			fmt.Printf("\t    Entire Buffer Contents:  \"%s\" (Read + n: %d bytes)\n", fixCRLF(string(buf[0:read+n])), read+n)
+			// update number of bytes read from the reader
+			// fmt.Printf("%d bytes read from reader...\n", n)
+			read += n
+			// if err != nil {
+			if ((err == io.EOF) && (n == 0)) || (err == io.ErrUnexpectedEOF) {
+				// io.EOF error will be returned if no more data is available and NO data was read into buffer
+				// if err == io.EOF {
+				// 	if n == 0 {
+				//fmt.Printf("\tnumber of bytes read n=%d, bytes in buffer read=%d\n", n, read)
+				if req.ParserState == requestStateParsingBody {
+					fmt.Printf("\tBody Length: %d / Content-Length: %d\n", read, cl)
+					n = read
+					err = nil
+					if read > cl {
+						n = cl
+						err = fmt.Errorf("Error: body length is greater than Content-Length indicated in header")
+						fmt.Printf("%v\n", err)
+					}
+					if read < cl {
+						err = fmt.Errorf("Error: body length is less than Content-Length indicated in header")
+						fmt.Printf("%v\n", err)
+					}
+					// copy body content from buffer to request body
+					req.Body = make([]byte, n)
+					copy(req.Body, buf[0:n])
+					fmt.Printf("\t    Data consumed: (%d bytes)\n", n)
+					req.ParserState = requestStateDone
+					break
+				} else if read == 0 {
+					err = nil
+					req.ParserState = requestStateDone
+					break
+				}
+				// }
+				// io.ErrUnexpectedEOF error will be returned if no more data is available but SOME data was read into buffer
+				// } else if err != io.ErrUnexpectedEOF {
+			} else if err != nil {
+				fmt.Errorf("Error reading request: %v", err)
+				return nil, err
+			}
 		}
 		// }
 		// // update number of bytes read from the reader
 		// // fmt.Printf("%d bytes read from reader...\n", n)
 		// read += n
 		// fmt.Printf("\t%d total bytes read...\n", read)
-		if req.ParserState != requestStateParsingBody {
-			n, err = req.parse(buf[:read])
-			if err != nil {
-				fmt.Errorf("error parsing request - %v", err)
-				return nil, err
-			}
-			// update number of bytes parsed from the buffer
-			parsed += n
-		}
+		// if req.ParserState != requestStateParsingBody {
+		// 	n, err = req.parse(buf[:read])
+		// 	if err != nil {
+		// 		fmt.Errorf("error parsing request - %v", err)
+		// 		return nil, err
+		// 	}
+		// 	// update number of bytes parsed from the buffer
+		// 	parsed += n
+		// }
 		// if no data parsed, increase buffer size keeping existing data
-		if parsed == 0 {
-			fmt.Printf("\tincreasing buffer size to ")
-			add = make([]byte, len(buf)*2)
-			copy(add, buf)
-			buf = add
-			fmt.Printf("%d/%d bytes\n", len(buf), cap(buf))
-		} else {
-			fmt.Printf("Contents of buffer parsed so far: \"%s\" (%d bytes)\n", fixCRLF(string(buf[:parsed])), parsed)
-		}
+		// if parsed == 0 && read == len(buf) {
+		// 	fmt.Printf("\tincreasing buffer size to ")
+		// 	add = make([]byte, len(buf)*2)
+		// 	copy(add, buf)
+		// 	buf = add
+		// 	fmt.Printf("%d/%d bytes\n", len(buf), cap(buf))
+		// } else {
+		// 	fmt.Printf("Contents of buffer parsed so far: \"%s\" (%d bytes)\n", fixCRLF(string(buf[:parsed])), parsed)
+		// }
 		if req.ParserState != state {
 			if req.ParserState == requestStateParsedHeader {
 				req.ParserState = requestStateParsingHeaders
@@ -205,16 +235,16 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			if req.ParserState == requestStateParsingBody {
 				fmt.Println()
 				if req.Headers.Get("Content-Length") == "" {
-					fmt.Printf("\tNo Content-Length Header in request\n")
+					fmt.Printf("\t  No Content-Length Header in request\n")
 					cl = 0
 				} else {
 					cl, err = strconv.Atoi(req.Headers.Get("Content-Length"))
 					if err != nil {
-						fmt.Printf("error retrieving Content-Length from header - %v", err)
+						fmt.Printf("Error retrieving Content-Length from header: %v", err)
 						cl = 0
 					}
 				}
-				fmt.Printf("\tContent-Length (from header): %d\n", cl)
+				fmt.Printf("\t  Content-Length (from header): %d bytes\n", cl)
 				if cl == 0 {
 					req.ParserState = requestStateDone
 				}
@@ -227,11 +257,11 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			}
 			read -= parsed
 			parsed = 0
-			fmt.Printf("Contents of cleaned buffer: \"%s\" (%d bytes)\n\n", fixCRLF(string(buf[:read])), read)
+			fmt.Printf("\tContents of cleaned buffer: \"%s\" (%d bytes)\n", fixCRLF(string(buf[:read])), read)
 		}
 	}
 	// fmt.Println("----------------")
-	fmt.Printf("\tBody: %s (%d bytes)\n", fixCRLF(string(req.Body)), len(req.Body))
+	fmt.Printf("\n\tBody: %s (%d bytes)\n\n", fixCRLF(string(req.Body)), len(req.Body))
 	return &req, err
 }
 

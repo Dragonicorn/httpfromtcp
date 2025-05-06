@@ -64,7 +64,7 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 		if len(h) == 0 {
 			return n, true, fmt.Errorf("missing headers in request")
 		}
-		fmt.Printf("Data consumed: \"<CR><LF>\" (%d bytes)\n\tHeaders: %v\n", n, h)
+		fmt.Printf("\t    Data consumed: \"<CR><LF>\" (%d bytes)\n\tHeaders: %v\n", n, h)
 		return n, true, nil
 	}
 	// return number of bytes consumed - including CRLF
@@ -101,6 +101,6 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	}
 	// fill header map with valid data
 	h[key] = value
-	fmt.Printf("Data consumed: \"%s<CR><LF>\" (%d bytes)\n\tHeaders: %v\n", line, n, h)
+	fmt.Printf("\t    Data consumed: \"%s<CR><LF>\" (%d bytes)\n\t    Headers: %v\n", line, n, h)
 	return n, false, nil
 }
