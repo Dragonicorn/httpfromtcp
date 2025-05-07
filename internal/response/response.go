@@ -33,6 +33,7 @@ const (
 	StateBody
 	StateChunkedBody
 	StateChunkedBodyDone
+	StateTrailers
 )
 
 type Writer struct {
@@ -156,9 +157,27 @@ func (w *Writer) WriteChunkedBodyDone() (int64, error) {
 		n   int
 	)
 	if w.State == StateChunkedBodyDone {
-		n, err = w.Body.Write([]byte(fmt.Sprintf("0\r\n\r\n")))
+		n, err = w.Body.Write([]byte("0\r\n"))
+		if err == nil {
+			w.State = StateTrailers
+		}
 	} else {
 		err = fmt.Errorf("Error: writing chunked body end out of sequence")
 	}
 	return int64(n), err
+}
+
+func (w *Writer) WriteTrailers(h headers.Headers) error {
+	var (
+		err error
+	)
+	if w.State == StateTrailers {
+		err = writeHeaders(w.Writer, h)
+		if err == nil {
+			_, err = w.Body.Write([]byte("\r\n"))
+		}
+	} else {
+		err = fmt.Errorf("Error: writing response trailers out of sequence")
+	}
+	return err
 }

@@ -1,10 +1,11 @@
 package server
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"fmt"
+	"hash"
 	"io"
-
-	// "io"
 	"net"
 	"net/http"
 	"strconv"
@@ -28,10 +29,12 @@ const BUFFER_SIZE int = 4096
 
 func httpbinHandler(w *response.Writer, req *request.Request) error {
 	var (
-		buf []byte
-		err error
-		h   headers.Headers
-		n   int
+		body    bytes.Buffer
+		buf     []byte
+		err     error
+		h       headers.Headers
+		hash    hash.Hash
+		b, l, n int
 		// o   int64
 		res *http.Response
 		url string = "https://httpbin.org" + strings.TrimPrefix(req.RequestLine.RequestTarget, "/httpbin")
@@ -55,6 +58,7 @@ func httpbinHandler(w *response.Writer, req *request.Request) error {
 	delete(h, "Content-Length")
 	h["Transfer-Encoding"] = "chunked"
 	h["Content-Type"] = res.Header.Get("Content-Type")
+	h["Trailer"] = "X-Content-SHA256, X-Content-Length"
 	err = w.WriteHeaders(h)
 	if err != nil {
 		return err
@@ -69,19 +73,43 @@ func httpbinHandler(w *response.Writer, req *request.Request) error {
 			err = nil
 			w.State = response.StateChunkedBodyDone
 		} else if err != nil {
-			break
+			return err
 		}
 		if n > 0 {
-			_, err = w.WriteChunkedBody(buf[:n])
+			b, err = body.Write(buf[:n])
 			if err != nil {
 				return err
 			}
-			_, err = w.Body.WriteTo(w.Writer)
+			// update length of body received
+			l += b
+			// write chunk to response
+			_, err = w.WriteChunkedBody(buf[:n])
+			if err == nil {
+				_, err = w.Body.WriteTo(w.Writer)
+			}
 			if err != nil {
 				return err
 			}
 			// fmt.Printf("%d bytes written to response channel\n", o)
 		}
+	}
+	_, err = w.WriteChunkedBodyDone()
+	if err == nil {
+		_, err = w.Body.WriteTo(w.Writer)
+	}
+	if err != nil {
+		return err
+	}
+
+	// add trailers to chunked response
+	clear(h)
+	hash = sha256.New()
+	hash.Write(body.Bytes())
+	h["X-Content-SHA256"] = fmt.Sprintf("%x", hash.Sum(nil))
+	h["X-Content-Length"] = fmt.Sprintf("%d", l)
+	err = w.WriteTrailers(h)
+	if err == nil {
+		_, err = w.Body.WriteTo(w.Writer)
 	}
 	return err
 }
@@ -133,24 +161,22 @@ func (s *Server) handle(c net.Conn) {
 		var handler = s.Handler
 		s.Handler = httpbinHandler
 		err = s.Handler(&w, req)
-		if err == nil {
-			cl, err = w.WriteChunkedBodyDone()
-		}
 		s.Handler = handler
 	} else {
-		// handle request
+		// handle standard request
 		err = s.Handler(&w, req)
 		if err == nil {
 			cl, err = strconv.ParseInt((w.Headers["Content-Length"]), 10, 64)
+			if err == nil {
+				n, err = w.Body.WriteTo(c)
+				if err != nil || n != cl {
+					fmt.Printf("Error writing to connection: %v\n", err)
+				}
+			}
 		}
 	}
 	if err != nil {
 		fmt.Printf("Error in handler function: %v\n", err)
-	} else {
-		n, err = w.Body.WriteTo(c)
-		if err != nil || n != cl {
-			fmt.Printf("Error writing to connection: %v\n", err)
-		}
 	}
 }
 
