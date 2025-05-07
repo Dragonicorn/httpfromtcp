@@ -31,6 +31,8 @@ const (
 	StateStatus = iota
 	StateHeader
 	StateBody
+	StateChunkedBody
+	StateChunkedBodyDone
 )
 
 type Writer struct {
@@ -124,4 +126,39 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 		err = fmt.Errorf("Error: writing body out of sequence")
 	}
 	return n, err
+}
+
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	var (
+		err     error
+		n, crlf int
+	)
+	if w.State == StateChunkedBody {
+		w.Body.Write([]byte(fmt.Sprintf("%x\r\n", len(p))))
+		n, err = w.Body.Write(p)
+		if err != nil || n != len(p) {
+			err = fmt.Errorf("Error writing response body chunk: %v\n", err)
+		}
+		crlf, err = w.Body.Write([]byte("\r\n"))
+		if err != nil || crlf != 2 {
+			err = fmt.Errorf("Error writing response body chunk: %v\n", err)
+		}
+		n += 2
+	} else {
+		err = fmt.Errorf("Error: writing chunked body out of sequence")
+	}
+	return n, err
+}
+
+func (w *Writer) WriteChunkedBodyDone() (int64, error) {
+	var (
+		err error
+		n   int
+	)
+	if w.State == StateChunkedBodyDone {
+		n, err = w.Body.Write([]byte(fmt.Sprintf("0\r\n\r\n")))
+	} else {
+		err = fmt.Errorf("Error: writing chunked body end out of sequence")
+	}
+	return int64(n), err
 }
