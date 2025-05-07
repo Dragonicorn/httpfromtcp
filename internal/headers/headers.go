@@ -2,7 +2,6 @@ package headers
 
 import (
 	"fmt"
-	// "regexp"
 	"strings"
 	"unicode"
 )

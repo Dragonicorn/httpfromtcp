@@ -1,6 +1,7 @@
 package response
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strconv"
@@ -24,7 +25,23 @@ var (
 	}
 )
 
-func WriteStatusLine(w io.Writer, statusCode StatusCode) error {
+type WriteState int
+
+const (
+	StateStatus = iota
+	StateHeader
+	StateBody
+)
+
+type Writer struct {
+	Writer     io.Writer
+	State      WriteState
+	StatusCode StatusCode
+	Headers    headers.Headers
+	Body       bytes.Buffer
+}
+
+func writeStatusLine(w io.Writer, statusCode StatusCode) error {
 	var (
 		err error
 		r   string
@@ -38,15 +55,31 @@ func WriteStatusLine(w io.Writer, statusCode StatusCode) error {
 	return err
 }
 
+func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
+	var (
+		err error
+	)
+	if w.State == StateStatus {
+		w.StatusCode = statusCode
+		err = writeStatusLine(w.Writer, statusCode)
+		if err == nil {
+			w.State = StateHeader
+		}
+	} else {
+		err = fmt.Errorf("Error: writing response status line out of sequence")
+	}
+	return err
+}
+
 func GetDefaultHeaders(contentLen int) headers.Headers {
 	h := make(headers.Headers)
 	h["Content-Length"] = strconv.Itoa(contentLen)
 	h["Connection"] = "close"
-	h["Content-Type"] = "text/plain"
+	h["Content-Type"] = "text/html"
 	return h
 }
 
-func WriteHeaders(w io.Writer, headers headers.Headers) error {
+func writeHeaders(w io.Writer, headers headers.Headers) error {
 	var (
 		err  error
 		k, v string
@@ -59,4 +92,36 @@ func WriteHeaders(w io.Writer, headers headers.Headers) error {
 	}
 	_, err = w.Write([]byte("\r\n"))
 	return err
+}
+
+func (w *Writer) WriteHeaders(headers headers.Headers) error {
+	var (
+		err error
+	)
+	if w.State == StateHeader {
+		w.Headers = headers
+		err = writeHeaders(w.Writer, headers)
+		if err == nil {
+			w.State = StateBody
+		}
+	} else {
+		err = fmt.Errorf("Error: writing response headers out of sequence")
+	}
+	return err
+}
+
+func (w *Writer) WriteBody(p []byte) (int, error) {
+	var (
+		err error
+		n   int
+	)
+	if w.State == StateBody {
+		n, err = w.Body.Write(p)
+		if err != nil || n != len(p) {
+			err = fmt.Errorf("Error writing response body: %v\n", err)
+		}
+	} else {
+		err = fmt.Errorf("Error: writing body out of sequence")
+	}
+	return n, err
 }

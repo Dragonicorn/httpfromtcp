@@ -1,13 +1,12 @@
 package main
 
 import (
-	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/dragonicorn/httpfromtcp/internal/headers"
 	"github.com/dragonicorn/httpfromtcp/internal/request"
 	"github.com/dragonicorn/httpfromtcp/internal/response"
 	"github.com/dragonicorn/httpfromtcp/internal/server"
@@ -15,25 +14,33 @@ import (
 
 const port = 42069
 
-func handler(w io.Writer, req *request.Request) *server.HandlerError {
+func handler(w *response.Writer, req *request.Request) error {
 	var (
 		err error
-		he  server.HandlerError
+		h   headers.Headers
+		msg string
+		sc  response.StatusCode
 	)
 	if req.RequestLine.RequestTarget == "/yourproblem" {
-		he.Status = response.StatusCode400
-		he.Message = "Your problem is not my problem\n"
+		sc = response.StatusCode400
+		msg = "<html><head><title>400 Bad Request</title></head><body><h1>Bad Request</h1><p>Your request honestly kinda sucked.</p></body></html>\n"
 	} else if req.RequestLine.RequestTarget == "/myproblem" {
-		he.Status = response.StatusCode500
-		he.Message = "Woopsie, my bad\n"
+		sc = response.StatusCode500
+		msg = "<html><head><title>500 Internal Server Error</title></head><body><h1>Internal Server Error</h1><p>Okay, you know what? This one is on me.</p></body></html>\n"
 	} else {
-		he.Status = response.StatusCode200
-		_, err = w.Write([]byte("All good, frfr\n"))
-		if err != nil {
-			fmt.Printf("Error in handler writing response body: %v\n", err)
+		sc = response.StatusCode200
+		msg = "<html><head><title>200 OK</title></head><body><h1>Success!</h1><p>Your request was an absolute banger.</p></body></html>\n"
+	}
+
+	err = w.WriteStatusLine(sc)
+	if err == nil {
+		h = response.GetDefaultHeaders(len(msg))
+		err = w.WriteHeaders(h)
+		if err == nil {
+			_, err = w.WriteBody([]byte(msg))
 		}
 	}
-	return &he
+	return err
 }
 
 func main() {

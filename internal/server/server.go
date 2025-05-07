@@ -1,31 +1,22 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
-	"io"
+	// "io"
 	"net"
+	"strconv"
 	"sync/atomic"
 
 	"github.com/dragonicorn/httpfromtcp/internal/request"
 	"github.com/dragonicorn/httpfromtcp/internal/response"
 )
 
-type Handler func(w io.Writer, req *request.Request) *HandlerError
-
-type HandlerError struct {
-	Status  response.StatusCode
-	Message string
-}
+type Handler func(w *response.Writer, req *request.Request) error
 
 type Server struct {
 	Closed   atomic.Bool
 	Listener net.Listener
 	Handler  Handler
-}
-
-func WriteHandlerError(w io.Writer, he *HandlerError) {
-	w.Write([]byte(fmt.Sprintf("Error: %s\r\n%s\r\n", response.ReasonPhrases[he.Status], he.Message)))
 }
 
 func (s *Server) Close() error {
@@ -48,60 +39,41 @@ func (s *Server) listen() {
 	}
 }
 
-// Primeagen's handle function
-// func (s *Server) handle(conn net.Conn) {
-// 	defer conn.Close()
-// 	req, err := request.RequestFromReader(conn)
-// 	if err != nil {
-// 		hErr := &HandlerError{
-// 			StatusCode: response.StatusCodeBadRequest,
-// 			Message:    err.Error(),
-// 		}
-// 		hErr.Write(conn)
-// 		return
-// 	}
-// 	buf := bytes.NewBuffer([]byte{})
-// 	hErr := s.handler(buf, req)
-// 	if hErr != nil {
-// 		hErr.Write(conn)
-// 		return
-// 	}
-// 	b := buf.Bytes()
-// 	response.WriteStatusLine(conn, response.StatusCodeSuccess)
-// 	headers := response.GetDefaultHeaders(len(b))
-// 	response.WriteHeaders(conn, headers)
-// 	conn.Write(b)
-// 	return
-// }
-
 func (s *Server) handle(c net.Conn) {
 	var (
-		body bytes.Buffer
-		he   *HandlerError
-		err  error
-		n    int64
-		req  *request.Request
+		err   error
+		cl, n int64
+		req   *request.Request
+		w     response.Writer = response.Writer{
+			Writer: c,
+			State:  response.StateStatus,
+			// StatusCode: response.StatusCode,
+			// Headers:    headers.Headers,
+			// Body:       bytes.Buffer,
+		}
 	)
+	defer c.Close()
+
 	// parse request from connection
 	req, err = request.RequestFromReader(c)
+	if err != nil {
+		fmt.Printf("Error parsing request: %v\n", err)
+		return
+	}
+
 	// handle request
-	// fmt.Printf("handle - req.RequestLine.RequestTarget: %s\n", req.RequestLine.RequestTarget)
-	he = s.Handler(&body, req)
-	// fmt.Printf("handle - he.Status: %v\n", he.Status)
-	if he.Status != response.StatusCode200 {
-		WriteHandlerError(&body, he)
+	err = s.Handler(&w, req)
+	if err != nil {
+		fmt.Printf("Error in handler function: %v\n", err)
+		return
 	}
-	err = response.WriteStatusLine(c, he.Status)
+	cl, err = strconv.ParseInt((w.Headers["Content-Length"]), 10, 64)
 	if err == nil {
-		err = response.WriteHeaders(c, response.GetDefaultHeaders(body.Len()))
-		if err == nil {
-			n, err = body.WriteTo(c)
-		}
+		n, err = w.Body.WriteTo(c)
 	}
-	if err != nil || n != int64(body.Len()) {
+	if err != nil || n != cl {
 		fmt.Printf("Error writing to connection: %v\n", err)
 	}
-	c.Close()
 }
 
 func Serve(port int, handler Handler) (*Server, error) {
