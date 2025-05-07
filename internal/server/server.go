@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -23,6 +24,36 @@ type Server struct {
 	Closed   atomic.Bool
 	Listener net.Listener
 	Handler  Handler
+}
+
+func videoHandler(w *response.Writer, req *request.Request) error {
+	var (
+		buffer []byte
+		err    error
+		h      headers.Headers
+		n      int64
+	)
+
+	buffer, err = os.ReadFile("./assets/vim.mp4")
+	if err != nil {
+		return err
+	}
+	err = w.WriteStatusLine(response.StatusCode200)
+	if err == nil {
+		h = response.GetDefaultHeaders(len(buffer))
+		h["Content-Type"] = "video/mp4"
+		err = w.WriteHeaders(h)
+		if err == nil {
+			_, err = w.WriteBody(buffer)
+			if err == nil {
+				n, err = w.Body.WriteTo(w.Writer)
+				if err != nil || n != int64(len(buffer)) {
+					fmt.Printf("Error writing to connection: %v\n", err)
+				}
+			}
+		}
+	}
+	return err
 }
 
 const BUFFER_SIZE int = 4096
@@ -160,6 +191,11 @@ func (s *Server) handle(c net.Conn) {
 	if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin") {
 		var handler = s.Handler
 		s.Handler = httpbinHandler
+		err = s.Handler(&w, req)
+		s.Handler = handler
+	} else if strings.HasPrefix(req.RequestLine.RequestTarget, "/video") {
+		var handler = s.Handler
+		s.Handler = videoHandler
 		err = s.Handler(&w, req)
 		s.Handler = handler
 	} else {
